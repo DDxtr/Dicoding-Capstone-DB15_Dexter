@@ -2,18 +2,20 @@ import sqlite3
 import pandas as pd
 import os
 
-print("File database akan dibuat di folder:", os.getcwd())
+"""
+Modul Inisialisasi Database SQLite UMKM Firaza (Smart Inventory)
+Membuat skema tabel master material, produk, BOM, dan log transaksi.
+"""
 
-# Lanjutkan dengan kode koneksi database Anda
-db_name = "smart_inventory.db"
-conn = sqlite3.connect(db_name)
-# ... sisa kode Anda ...
-# ==========================================
-# 1. INISIALISASI DATABASE & PEMBUATAN TABEL
-# ==========================================
-db_name = "smart_inventory.db"
-conn = sqlite3.connect(db_name)
+DB_NAME = os.path.join(os.path.dirname(__file__), "smart_inventory.db")
+print(f"Menginisialisasi database pada: {DB_NAME}")
+
+conn = sqlite3.connect(DB_NAME)
 cursor = conn.cursor()
+
+# ==========================================
+# 1. PEMBUATAN TABEL SKEMA
+# ==========================================
 
 # Tabel Master Material (Bahan baku pendukung fulfillment)
 cursor.execute("""
@@ -22,7 +24,8 @@ CREATE TABLE IF NOT EXISTS materials (
     material_name TEXT NOT NULL,
     unit TEXT NOT NULL,
     current_stock INTEGER NOT NULL,
-    lead_time_days INTEGER NOT NULL
+    lead_time_days INTEGER NOT NULL,
+    min_stock_threshold INTEGER DEFAULT 30
 )
 """)
 
@@ -35,7 +38,7 @@ CREATE TABLE IF NOT EXISTS products (
 )
 """)
 
-# Tabel Bill of Materials (BOM / Resep kebutuhan per 1 unit produk)
+# Tabel Bill of Materials (BOM / Resep kebutuhan per unit produk)
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS bill_of_materials (
     boms_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -54,77 +57,76 @@ CREATE TABLE IF NOT EXISTS transactions (
     date TEXT NOT NULL,
     transaction_type TEXT NOT NULL,
     reference_id INTEGER NOT NULL,
-    quantity INTEGER NOT NULL
+    quantity INTEGER NOT NULL,
+    note TEXT DEFAULT ''
 )
 """)
 
 conn.commit()
-print("-> Tabel database berhasil diinisialisasi!\n")
+print("-> Tabel database berhasil diverifikasi & diinisialisasi!\n")
 
 # ==========================================
-# 2. MENGISI DATA DUMMY (CONTOH AWAL)
+# 2. SEED DATA AWAL (JIKA KOSONG)
 # ==========================================
 
-# Data Dummy: Materials (Kardus, Pita, Packaging)
-materials_dummy = [
-    ("Kardus Box Ukuran M", "pcs", 45, 3),
-    ("Kardus Box Ukuran L", "pcs", 20, 3),
-    ("Pita Emas Satin", "meter", 150, 2),
-    ("Plastik Wrapping", "pcs", 80, 1),
-    ("Greeting Card Eksklusif", "pcs", 12, 2)
-]
+# Cek tabel materials
+cursor.execute("SELECT COUNT(*) FROM materials")
+if cursor.fetchone()[0] == 0:
+    materials_dummy = [
+        ("Kardus Box Ukuran M", "pcs", 45, 3, 30),
+        ("Kardus Box Ukuran L", "pcs", 20, 3, 25),
+        ("Pita Emas Satin", "meter", 150, 2, 50),
+        ("Plastik Wrapping", "pcs", 80, 1, 30),
+        ("Greeting Card Eksklusif", "pcs", 12, 2, 20)
+    ]
+    cursor.executemany("""
+    INSERT INTO materials (material_name, unit, current_stock, lead_time_days, min_stock_threshold)
+    VALUES (?, ?, ?, ?, ?)
+    """, materials_dummy)
+    print("-> Data awal Material berhasil dimasukkan.")
 
-cursor.executemany("""
-INSERT INTO materials (material_name, unit, current_stock, lead_time_days)
-VALUES (?, ?, ?, ?)
-""", materials_dummy)
+# Cek tabel products
+cursor.execute("SELECT COUNT(*) FROM products")
+if cursor.fetchone()[0] == 0:
+    products_dummy = [
+        ("Hampers Sajadah Premium", 150000.0),
+        ("Hampers Handuk Seserahan", 120000.0)
+    ]
+    cursor.executemany("""
+    INSERT INTO products (product_name, price)
+    VALUES (?, ?)
+    """, products_dummy)
+    print("-> Data awal Produk berhasil dimasukkan.")
 
-# Data Dummy: Products (Hampers Handuk & Sajadah)
-products_dummy = [
-    ("Hampers Sajadah Premium", 150000),
-    ("Hampers Handuk Seserahan", 120000)
-]
-
-cursor.executemany("""
-INSERT INTO products (product_name, price)
-VALUES (?, ?)
-""", products_dummy)
-
-# Data Dummy: Bill of Materials (BOM)
-# Asumsi:
-# Product 1 (Hampers Sajadah Premium) butuh:
-# - 1 Kardus Box Ukuran M (material_id=1)
-# - 2 Meter Pita Emas Satin (material_id=3)
-# - 1 Greeting Card Eksklusif (material_id=5)
-# Product 2 (Hampers Handuk Seserahan) butuh:
-# - 1 Kardus Box Ukuran L (material_id=2)
-# - 1.5 Meter Pita Emas Satin (material_id=3)
-# - 1 Plastik Wrapping (material_id=4)
-boms_dummy = [
-    (1, 1, 1.0),  # Hampers Sajadah -> Kardus M (1 pcs)
-    (1, 3, 2.0),  # Hampers Sajadah -> Pita Emas (2 meter)
-    (1, 5, 1.0),  # Hampers Sajadah -> Greeting Card (1 pcs)
-    (2, 2, 1.0),  # Hampers Handuk -> Kardus L (1 pcs)
-    (2, 3, 1.5),  # Hampers Handuk -> Pita Emas (1.5 meter)
-    (2, 4, 1.0)   # Hampers Handuk -> Plastik Wrapping (1 pcs)
-]
-
-cursor.executemany("""
-INSERT INTO bill_of_materials (product_id, material_id, quantity_required)
-VALUES (?, ?, ?)
-""", boms_dummy)
+# Cek tabel bill_of_materials
+cursor.execute("SELECT COUNT(*) FROM bill_of_materials")
+if cursor.fetchone()[0] == 0:
+    boms_dummy = [
+        (1, 1, 1.0),  # Hampers Sajadah -> Kardus M (1 pcs)
+        (1, 3, 2.0),  # Hampers Sajadah -> Pita Emas (2 meter)
+        (1, 5, 1.0),  # Hampers Sajadah -> Greeting Card (1 pcs)
+        (2, 2, 1.0),  # Hampers Handuk -> Kardus L (1 pcs)
+        (2, 3, 1.5),  # Hampers Handuk -> Pita Emas (1.5 meter)
+        (2, 4, 1.0)   # Hampers Handuk -> Plastik Wrapping (1 pcs)
+    ]
+    cursor.executemany("""
+    INSERT INTO bill_of_materials (product_id, material_id, quantity_required)
+    VALUES (?, ?, ?)
+    """, boms_dummy)
+    print("-> Data awal Bill of Materials (BOM) berhasil dimasukkan.")
 
 conn.commit()
-print("-> Data dummy berhasil dimasukkan ke dalam database!\n")
 
 # ==========================================
-# 3. CONTOH QUERY & SIMULASI KALKULASI STOK
+# 3. VERIFIKASI DATA
 # ==========================================
-print("=== MENAMPILKAN MASTER MATERIAL ===")
+print("\n=== RINGKASAN DATA DATABASE ===")
 df_materials = pd.read_sql_query("SELECT * FROM materials", conn)
-print(df_materials, "\n")
+print("Master Materials:\n", df_materials)
 
-print("=== MENAMPILKAN RESEP BOM (BILL OF MATERIALS) ===")
+df_products = pd.read_sql_query("SELECT * FROM products", conn)
+print("\nMaster Products:\n", df_products)
+
 query_bom = """
 SELECT 
     p.product_name, 
@@ -136,7 +138,7 @@ JOIN products p ON b.product_id = p.product_id
 JOIN materials m ON b.material_id = m.material_id
 """
 df_bom = pd.read_sql_query(query_bom, conn)
-print(df_bom, "\n")
+print("\nBill of Materials (BOM):\n", df_bom)
 
-# Tutup koneksi database setelah selesai
 conn.close()
+print("\n-> Inisialisasi Database Selesai!")
