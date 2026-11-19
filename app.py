@@ -2,221 +2,420 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import os
-import joblib
+import json
 from datetime import datetime
 
-# Konfigurasi Halaman Streamlit
+# Import modul internal proyek
+from database import (
+    init_db,
+    get_materials_df,
+    get_products_df,
+    get_bom_df,
+    get_recent_transactions_df,
+    record_transaction,
+    calculate_order_bom_impact
+)
+from forecasting import (
+    load_forecasting_assets,
+    get_model_metrics,
+    generate_multi_day_forecast,
+    calculate_material_projections
+)
+from order_parser import process_order_inquiry
+from rag_assistant import ask_firaza_advisor, get_realtime_inventory_context
+
+# ==========================================
+# KONFIGURASI HALAMAN & STYLING
+# ==========================================
 st.set_page_config(
-    page_title="Smart Inventory & Demand Forecasting",
+    page_title="Firaza Smart Warehouse & Inventory",
     page_icon="📦",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# Custom Styling untuk memperbaiki UI/UX (clean, modern look)
+# Custom Styling CSS (Clean, Modern, Enterprise UMKM)
 st.markdown("""
-    <style>
+<style>
     .main {
-        background-color: #f8f9fa;
+        background-color: #f8fafc;
     }
-    .stMetric {
-        background-color: #ffffff;
-        padding: 15px;
-        border-radius: 10px;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+    .metric-card {
+        background: #ffffff;
+        padding: 1.2rem;
+        border-radius: 12px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+        border: 1px solid #e2e8f0;
     }
-    .stAlert {
+    .status-badge-safe {
+        background-color: #dcfce7;
+        color: #166534;
+        padding: 4px 8px;
+        border-radius: 6px;
+        font-weight: 600;
+    }
+    .status-badge-warning {
+        background-color: #fef9c3;
+        color: #854d0e;
+        padding: 4px 8px;
+        border-radius: 6px;
+        font-weight: 600;
+    }
+    .status-badge-danger {
+        background-color: #fee2e2;
+        color: #991b1b;
+        padding: 4px 8px;
+        border-radius: 6px;
+        font-weight: 600;
+    }
+    .stButton>button {
         border-radius: 8px;
+        font-weight: 600;
     }
-    </style>
+</style>
 """, unsafe_allow_html=True)
 
-# Judul Utama Dashboard dengan header yang bersih
-st.title("📦 Smart Inventory & Demand Forecasting System")
-st.markdown("Sistem manajemen inventaris cerdas berbasis AI untuk UMKM Firaza, terintegrasi dengan *Demand Forecasting* dan simulasi percakapan klien.")
-
-# Load dataset atau buat data dummy jika belum ada
-@st.cache_data
-def load_data():
-    if os.path.exists("processed_dataset_v2.csv"):
-        return pd.read_csv("processed_dataset_v2.csv")
-    elif os.path.exists("processed_dataset.csv"):
-        return pd.read_csv("processed_dataset.csv")
-    else:
-        # Fallback dummy data jika file belum ada
-        dates = pd.date_range(start="2024-01-01", periods=100, freq="D")
-        df_dummy = pd.DataFrame({
-            "date": dates,
-            "quantity": np.random.poisson(lam=10, size=100),
-            "is_peak_season": [1 if i % 30 == 0 else 0 for i in range(100)]
-        })
-        return df_dummy
-
-df_data = load_data()
-
-# Sidebar Navigasi Menu yang rapi
-st.sidebar.header("🧭 Navigasi Menu")
-menu = st.sidebar.selectbox(
-    "Pilih Modul Aplikasi:",
-    [
-        "📊 Dashboard Utama",
-        "💬 Simulasi Chat & Order Parsing",
-        "📦 Logistik & Transaksi",
-        "⚙️ Master Data & BOM"
-    ]
-)
+# Inisialisasi Database
+init_db()
 
 # ==========================================
-# 1. HALAMAN: DASHBOARD UTAMA
+# SIDEBAR: NAVIGASI & KONFIGURASI AI
 # ==========================================
-if menu == "📊 Dashboard Utama":
-    st.subheader("📊 Ringkasan Kesehatan Inventaris & Tren Permintaan")
-    
-    # Metrik Utama
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Total Jenis Material", "4 Item", "Aktif")
-    col2.metric("Status Kritis / Restock", "1 Item", "Waspada ⚠️", delta_color="inverse")
-    col3.metric("Prediksi Rata-rata Harian", "11 Unit", "+1.2%")
-    col4.metric("Status Musim (Season)", "Normal / Low", "Stabil")
+with st.sidebar:
+    st.image("https://img.icons8.com/fluency/96/package.png", width=64)
+    st.title("Firaza Smart Warehouse")
+    st.caption("AI-Powered Inventory & Demand Forecasting System")
     
     st.markdown("---")
+    menu = st.radio(
+        "🧭 Navigasi Menu:",
+        [
+            "📊 Dashboard Utama & Forecasting",
+            "💬 Simulasi Chat & Order Parsing",
+            "🤖 Asisten Cerdas Restock (RAG)",
+            "📦 Logistik & Transaksi Stok",
+            "⚙️ Master Data & Resep BOM"
+        ]
+    )
+
+    st.markdown("---")
+    st.subheader("🛡️ AI Engine & Architecture")
+    st.success(
+        "🟢 **100% On-Premise & Standalone**\n\n"
+        "• **Demand Forecasting:** XGBoost Regressor\n"
+        "• **Chat & Order Parsing:** Local Semantic NLP Engine\n"
+        "• **RAG Assistant:** ChromaDB Vector Database\n\n"
+        "*Bebas kuota API, privasi data 100% lokal, dan tanpa ketergantungan internet eksternal.*"
+    )
+
+    st.markdown("---")
+    st.caption(
+        "**Dicoding Bootcamp Capstone Project**\n"
+        "ID Tim: **DB15-I028**\n"
+        "Tema: **Firaza Smart Warehouse**\n"
+        "Author: **Dominick Dexter Gunawan**"
+    )
+
+# ==========================================
+# 1. HALAMAN: DASHBOARD UTAMA & DEMAND FORECASTING
+# ==========================================
+if menu == "📊 Dashboard Utama & Forecasting":
+    st.title("📊 Dashboard Utama & Demand Forecasting")
+    st.markdown("Monitor ketersediaan inventaris material secara *real-time* dan proyeksikan kebutuhan stok menggunakan model Machine Learning **XGBoost Regressor**.")
+
+    # Ambil data terkini
+    materials_df = get_materials_df()
     
-    # Grafik Tren Permintaan
-    col_chart1, col_chart2 = st.columns([2, 1])
-    with col_chart1:
-        st.markdown("### 📈 Grafik Proyeksi Permintaan & Data Historis")
-        if df_data is not None and 'date' in df_data.columns and 'quantity' in df_data.columns:
-            st.line_chart(df_data, x="date", y="quantity", use_container_width=True)
-        else:
-            st.info("Data tren belum tersedia secara lengkap.")
-            
-    with col_chart2:
-        st.markdown("### 💡 Info Model AI")
+    # Proyeksi 7 hari default untuk metrik dashboard
+    proj_df, forecast_df, total_pred_units = calculate_material_projections(horizon_days=7)
+    
+    critical_count = len(proj_df[proj_df["is_critical"] == True])
+    warning_count = len(proj_df[proj_df["is_warning"] == True])
+    daily_avg_pred = round(total_pred_units / 7, 1)
+
+    # Deteksi status musim saat ini
+    today = datetime.now()
+    day_of_year = today.timetuple().tm_yday
+    is_current_peak = (90 <= day_of_year <= 120) or (330 <= day_of_year <= 365)
+    season_status = "Peak Season (Lonjakan Pesanan) 🚀" if is_current_peak else "Normal / Stable Season 🍃"
+
+    # Baris Metrik Utama (KPI Cards)
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("📦 Jenis Material Terdaftar", f"{len(materials_df)} Material", "Tersedia di Gudang")
+    col2.metric("⚠️ Status Stok Kritis", f"{critical_count} Item Kritis", f"{warning_count} Perlu Perhatian", delta_color="inverse")
+    col3.metric("📈 Prediksi Permintaan (7 Hari)", f"{int(total_pred_units)} Unit", f"~{daily_avg_pred} unit/hari")
+    col4.metric("🗓️ Status Siklus Musim", "Peak Season" if is_current_peak else "Reguler", season_status)
+
+    st.markdown("---")
+
+    # Bagian 1: Status Ketersediaan Stok Material Terkini
+    st.subheader("📋 Status Kesehatan Stok Material Gudang (Real-Time)")
+    st.caption("Status kesehatan dihitung secara dinamis membandingkan stok aktual terhadap Reorder Point (ROP) dan kebutuhan produksi.")
+
+    display_cols = ["Nama Material", "Stok Saat Ini", "Proyeksi Kebutuhan (7 Hari)", "Sisa Estimasi", "Reorder Point (ROP)", "Status Kesehatan", "Rekomendasi Operasional"]
+    st.dataframe(proj_df[display_cols], use_container_width=True, hide_index=True)
+
+    st.markdown("---")
+
+    # Bagian 2: Interactive Demand Forecasting
+    st.subheader("🔮 Simulasi Proyeksi Permintaan Cerdas (AI Demand Forecast)")
+    st.markdown("Pilih horizon waktu proyeksi untuk melihat estimasi lonjakan pesanan dan analisis kebutuhan material pendukung.")
+
+    col_ctrl1, col_ctrl2 = st.columns([1, 3])
+    with col_ctrl1:
+        horizon_choice = st.selectbox(
+            "Pilih Horizon Proyeksi Masa Depan:",
+            [7, 14, 30],
+            index=0,
+            format_func=lambda x: f"{x} Hari ke Depan"
+        )
+        run_sim = st.button("🔄 Perbarui Simulasi Forecast", use_container_width=True, type="primary")
+
+    custom_proj_df, custom_forecast_df, custom_total_units = calculate_material_projections(horizon_choice)
+
+    # Grafik Proyeksi Permintaan
+    col_chart, col_details = st.columns([2, 1])
+    with col_chart:
+        st.markdown(f"#### 📈 Tren Permintaan Harian ({horizon_choice} Hari ke Depan)")
+        chart_data = custom_forecast_df.set_index("date")[["predicted_quantity"]]
+        st.line_chart(chart_data, color="#2563eb", use_container_width=True)
+
+    with col_details:
+        st.markdown("#### 💡 Ringkasan Analisis AI")
         st.info(
-            "Model **XGBoost Regressor** aktif mendeteksi pola musiman "
-            "berdasarkan fitur kalender dan data *lag* harian untuk memproyeksikan "
-            "kebutuhan material secara presisi."
+            f"• **Total Prediksi Permintaan:** **{int(custom_total_units)} unit** hampers.\n\n"
+            f"• **Rata-rata Permintaan:** **{round(custom_total_units/horizon_choice, 1)} unit/hari**.\n\n"
+            f"• **Peak Days Terdeteksi:** {len(custom_forecast_df[custom_forecast_df['is_peak_season'] != 'Normal'])} hari.\n\n"
+            f"• **Fitur Kunci:** Kalender hari raya, siklus mingguan, data *lag 7*, dan *rolling mean 7*."
         )
 
-    st.markdown("---")
-    st.subheader("📋 Status Ketersediaan Stok Material (Real-Time)")
-    
-    # Tabel Status Stok yang interaktif dan bersih
-    stock_status_data = {
-        "Nama Material": ["Kardus M", "Pita Satin", "Greeting Card", "Sajadah Premium"],
-        "Stok Aktual": [55, 120, 300, 45],
-        "Proyeksi Kebutuhan (7 Hari)": [80, 100, 250, 70],
-        "Status Klasifikasi": [
-            "🟡 Need Attention", 
-            "🟢 Safe", 
-            "🟢 Safe", 
-            "🔴 Restock Priority"
-        ]
-    }
-    df_stock = pd.DataFrame(stock_status_data)
-    st.dataframe(df_stock, use_container_width=True, hide_index=True)
+    # Tabel Rincian Proyeksi Kebutuhan Material
+    st.markdown(f"#### 📦 Proyeksi Kebutuhan Material untuk {horizon_choice} Hari")
+    custom_display_cols = ["Nama Material", "Stok Saat Ini", f"Proyeksi Kebutuhan ({horizon_choice} Hari)", "Sisa Estimasi", "Reorder Point (ROP)", "Status Kesehatan", "Rekomendasi Operasional"]
+    st.dataframe(custom_proj_df[custom_display_cols], use_container_width=True, hide_index=True)
+
+    # Evaluasi Model ML Expander
+    with st.expander("🔍 Informasi & Evaluasi Model Machine Learning"):
+        metrics = get_model_metrics()
+        col_m1, col_m2, col_m3 = st.columns(3)
+        col_m1.metric("Arsitektur Model", metrics["model_name"])
+        col_m2.metric("Root Mean Squared Error (RMSE)", f"{metrics['rmse']}")
+        col_m3.metric("Mean Absolute Error (MAE)", f"{metrics['mae']}")
+        st.markdown("**Fitur Input Model:** `year`, `month`, `day`, `dayofweek`, `is_weekend`, `is_peak_season`, `lag_7`, `rolling_mean_7`")
+        st.caption("Model dilatih menggunakan validasi time-series (chronological split) tanpa data leakage untuk memastikan generalisasi optimal pada tren musiman UMKM Firaza.")
 
 # ==========================================
 # 2. HALAMAN: SIMULASI CHAT & ORDER PARSING
 # ==========================================
 elif menu == "💬 Simulasi Chat & Order Parsing":
-    st.subheader("💬 Simulasi Interaksi Klien & AI Order Parsing")
+    st.title("💬 Simulasi Chat & AI Order Parsing")
     st.markdown(
-        "Masukkan contoh teks percakapan klien (simulasi chat WhatsApp) di bawah ini. "
-        "Sistem AI akan mengekstrak informasi penting secara otomatis dan mensimulasikan dampaknya terhadap stok gudang."
+        "Calon pembeli UMKM Firaza sering mengirim pertanyaan pesanan via WhatsApp dengan kalimat tidak terstruktur. "
+        "Sistem AI akan mengekstrak detail pesanan, menghitung kebutuhan material berdasarkan **Bill of Materials (BOM)**, dan mendeteksi potensi *bottleneck* stok di gudang."
     )
-    
-    # Layout kolom untuk input chat dan hasil parsing
-    col_chat1, col_chat2 = st.columns(2)
-    
-    with col_chat1:
+
+    # Preset Contoh Chat untuk Kemudahan Evaluasi & Demo
+    st.markdown("##### ⚡ Pilih Contoh Percakapan Cepat (Preset):")
+    preset_cols = st.columns(3)
+    preset_text = None
+    if preset_cols[0].button("📝 Kasus 1: Pesanan Besar 150 Sajadah", use_container_width=True):
+        preset_text = "Halo Kak Firaza, saya Ibu Rina dari panitia kantor mau pesan hampers sajadah premium sebanyak 150 pax untuk acara tasyakuran bulan depan, kira-kira keburu nggak ya?"
+    if preset_cols[1].button("📝 Kasus 2: Pesanan 80 Handuk Seserahan", use_container_width=True):
+        preset_text = "Kak, mau tanya hampers handuk seserahan 80 unit untuk souvenir pernikahan minggu depan apakah stok kardus L dan pitanya ready?"
+    if preset_cols[2].button("📝 Kasus 3: Inquiry Santai 25 Sajadah", use_container_width=True):
+        preset_text = "Permisi kak firaza, tanya dong harga hampers sajadah kalau order 25 pcs buat souvenir pengajian akhir bulan berapa ya? Apakah ada diskon?"
+
+    default_chat = preset_text or "Halo Kak Firaza, saya mau pesan hampers sajadah untuk acara kantor bulan depan sekitar 150 pax, kira-kira keburu nggak ya?"
+
+    col_input, col_output = st.columns(2)
+
+    with col_input:
         st.markdown("#### 📥 Input Percakapan Klien")
         chat_input = st.text_area(
-            "Salin/ketik teks chat konsultasi klien:",
-            value="Halo Kak Firaza, saya mau pesan hampers sajadah untuk acara kantor bulan depan sekitar 150 pax, kira-kira keburu nggak ya?",
-            height=150
+            "Teks Pesan WhatsApp dari Klien:",
+            value=default_chat,
+            height=180
         )
-        
-        parse_btn = st.button("🚀 Proses & Parse Percakapan", type="primary", use_container_width=True)
+        parse_btn = st.button("🚀 Analisis Percakapan dengan AI", type="primary", use_container_width=True)
 
-    with col_chat2:
+    with col_output:
         st.markdown("#### 📤 Hasil Ekstraksi AI (Structured Data)")
-        if parse_btn:
-            # Simulasi parsing cerdas berbasis keyword / intent extraction
-            import time
-            with st.spinner("AI sedang menganalisis percakapan..."):
-                time.sleep(0.8)
+        if parse_btn or preset_text:
+            with st.spinner("AI sedang membedah entitas percakapan..."):
+                analysis_result = process_order_inquiry(chat_input)
+
+            if analysis_result:
+                parsed = analysis_result["parsed_entities"]
+                st.success(f"Berhasil diekstrak oleh **{parsed.get('engine', 'AI Engine')}**!")
                 
-            # Logika parsing sederhana namun fungsional untuk demo
-            detected_qty = 150 if "150" in chat_input else (50 if "50" in chat_input else 100)
-            detected_product = "Hampers Sajadah Premium" if "sajadah" in chat_input.lower() else "Hampers Handuk"
-            
-            st.success("Berhasil mengekstrak informasi dari teks!")
-            
-            # Tampilkan hasil JSON terstruktur
-            parsed_result = {
-                "produk_diminati": detected_product,
-                "jumlah_pesanan": detected_qty,
-                "estimasi_waktu": "Bulan Depan",
-                "intent_klien": "High Intent (Serius Order)",
-                "tingkat_probabilitas": "85%"
-            }
-            st.json(parsed_result)
+                # Format kartu entitas
+                c_e1, c_e2 = st.columns(2)
+                c_e1.write(f"**Pelanggan:** {parsed.get('customer_name')}")
+                c_e1.write(f"**Produk:** {parsed.get('product_name')}")
+                c_e1.write(f"**Jumlah Unit:** `{parsed.get('quantity')} Pax`")
+                c_e2.write(f"**Tenggat Waktu:** {parsed.get('target_timeframe')}")
+                c_e2.write(f"**Tingkat Intent:** {parsed.get('intent_category')}")
+                c_e2.write(f"**Probabilitas Order:** `{parsed.get('probability_order')}`")
+
+                with st.expander("Lihat Format JSON Mentah"):
+                    st.json(parsed)
+            else:
+                st.warning("Teks percakapan kosong.")
         else:
-            st.info("Klik tombol 'Proses & Parse Percakapan' untuk melihat hasil ekstraksi data.")
+            st.info("Klik tombol 'Analisis Percakapan dengan AI' atau gunakan preset di atas untuk mengekstrak data.")
 
-    if parse_btn:
+    # Analisis Dampak BOM jika sudah diproses
+    if (parse_btn or preset_text) and 'analysis_result' in locals() and analysis_result:
         st.markdown("---")
-        st.subheader("⚠️ Analisis Dampak Terhadap Inventaris (BOM Impact)")
+        st.subheader("🔍 Analisis Dampak Kebutuhan Material (BOM Impact)")
         
-        # Peringatan dampak stok secara visual
-        col_imp1, col_imp2 = st.columns(2)
-        with col_imp1:
-            st.warning(
-                f"**Simulasi Kebutuhan Material untuk {detected_qty} Pax:**\n"
-                f"- Sajadah: {detected_qty} pcs\n"
-                f"- Kardus M: {detected_qty} pcs\n"
-                f"- Pita Satin: {detected_qty * 2} meter"
-            )
-        with col_imp2:
+        bom_impact = analysis_result["bom_impact_df"]
+        has_shortage = analysis_result["has_shortage"]
+        shortage_items = analysis_result["shortage_materials"]
+
+        # Alert Banner
+        if has_shortage:
             st.error(
-                "🚨 **PERINGATAN STOK KRITIS:**\n"
-                "Stok **Kardus M** dan **Sajadah Premium** di gudang tidak mencukupi untuk "
-                "memenuhi pesanan prospek ini. Status material berubah menjadi **Restock Priority**!"
+                f"🚨 **PERINGATAN BOTTLENECK GUDANG:**\n\n"
+                f"Stok saat ini **TIDAK MENCUKUPI** untuk memenuhi pesanan **{parsed.get('quantity')} unit {parsed.get('product_name')}**!\n"
+                f"Bahan baku yang mengalami defisit: **{', '.join(shortage_items)}**.\n"
+                f"*SOP Tindakan: Jangan terima pembayaran/DP sebelum berkoordinasi dengan supplier material terkait waktu pengiriman!*"
+            )
+        else:
+            st.success(
+                f"✅ **KAPASITAS AMAN:** Seluruh material penunjang di gudang mencukupi untuk memenuhi pesanan **{parsed.get('quantity')} unit {parsed.get('product_name')}**."
             )
 
-# ==========================================
-# 3. HALAMAN: LOGISTIK & TRANSAKSI
-# ==========================================
-elif menu == "📦 Logistik & Transaksi":
-    st.subheader("📦 Pencatatan Transaksi Logistik Harian")
-    st.markdown("Gunakan form berikut untuk memperbarui data stok masuk atau keluar secara instan.")
-    
-    with st.form("transaction_form", clear_on_submit=False):
-        col_f1, col_f2 = st.columns(2)
-        with col_f1:
-            trans_type = st.selectbox("Jenis Transaksi", ["Stock-In (Barang Masuk / Restock)", "Stock-Out (Keluar / Produksi)"])
-            material_name = st.selectbox("Pilih Material", ["Kardus M", "Pita Satin", "Greeting Card", "Sajadah Premium"])
-        with col_f2:
-            qty = st.number_input("Jumlah Kuantitas (Unit)", min_value=1, value=50)
-            note = st.text_input("Catatan / Keterangan", "Contoh: Restock dari supplier utama")
-            
-        submit = st.form_submit_button("💾 Simpan Transaksi ke Database", use_container_width=True)
-        
-        if submit:
-            st.success(f"Berhasil mencatat transaksi **{trans_type}** untuk **{material_name}** sebanyak **{qty} unit**!")
+        # Tabel Dampak Material
+        show_impact_cols = ["Material", "Kebutuhan Resep", "Total Dibutuhkan", "Stok Gudang", "Sisa Pasca Order", "Status", "Rekomendasi Tindakan"]
+        st.dataframe(bom_impact[show_impact_cols], use_container_width=True, hide_index=True)
+
+        # Aksi Simulasi Pengurangan Stok
+        col_act1, col_act2 = st.columns([1, 2])
+        with col_act1:
+            if st.button("📥 Simulasikan Pengurangan Stok (Commit Order)", use_container_width=True):
+                # Catat transaksi pemakaian
+                prod_id = parsed.get("product_id", 1)
+                bom_df = get_bom_df()
+                relevant_bom = bom_df[bom_df["product_id"] == prod_id]
+                for _, row in relevant_bom.iterrows():
+                    m_id = row["material_id"]
+                    req_qty = int(row["quantity_required"] * parsed.get("quantity", 1))
+                    record_transaction("Stock-Out", m_id, req_qty, f"Pesanan {parsed.get('customer_name')} ({parsed.get('quantity')} unit)")
+                st.success("Stok berhasil diperbarui di database! Kunjungi menu Dashboard Utama untuk melihat stok terkini.")
 
 # ==========================================
-# 4. HALAMAN: MASTER DATA & BOM
+# 3. HALAMAN: ASISTEN CERDAS RESTOCK (RAG SYSTEM)
 # ==========================================
-elif menu == "⚙️ Master Data & BOM":
-    st.subheader("⚙️ Pengaturan Master Data & Bill of Materials (BOM)")
-    st.markdown("Daftar resep komponen material dasar yang dibutuhkan untuk setiap jenis produk hampers.")
-    
-    bom_table = {
-        "Produk Hampers Jadi": ["Hampers Sajadah A", "Hampers Sajadah A", "Hampers Handuk B", "Hampers Handuk B"],
-        "Material Komponen": ["Kardus M", "Sajadah Premium", "Kardus M", "Pita Satin"],
-        "Kuantitas Per Unit": [1, 1, 1, 2],
-        "Satuan": ["Pcs", "Pcs", "Pcs", "Meter"]
-    }
-    st.dataframe(pd.DataFrame(bom_table), use_container_width=True, hide_index=True)
+elif menu == "🤖 Asisten Cerdas Restock (RAG)":
+    st.title("🤖 Firaza Smart Restock Advisor (RAG)")
+    st.markdown(
+        "Asisten cerdas berbasis **Retrieval-Augmented Generation (RAG)** yang memadukan **Vector Database ChromaDB** "
+        "(berisi SOP gudang, data supplier, lead time, dan strategi musiman) dengan **data stok real-time** dari database SQLite dan **proyeksi model Machine Learning**."
+    )
+
+    # Preset Pertanyaan Konsultasi Cerdas
+    st.markdown("##### 💡 Contoh Topik Pertanyaan Konsultasi:")
+    q_cols = st.columns(3)
+    quick_q = None
+    if q_cols[0].button("🛒 Kapan dan berapa banyak harus restock kardus?", use_container_width=True):
+        quick_q = "Kapan saya harus restock kardus dan berapa lead time serta minimum ordernya?"
+    if q_cols[1].button("🚀 Bagaimana strategi restock menghadapi Ramadhan?", use_container_width=True):
+        quick_q = "Bagaimana strategi penyetokan bahan baku menjelang peak season Ramadhan dan Idul Fitri?"
+    if q_cols[2].button("🚨 Apa yang harus dilakukan jika ada order >100 pax?", use_container_width=True):
+        quick_q = "Apa SOP jika ada calon pembeli yang ingin memesan pesanan partai besar di atas 100 pax?"
+
+    user_question = st.text_input(
+        "Ajukan pertanyaan seputar inventaris, restock, atau kebijakan gudang:",
+        value=quick_q or "Bahan baku apa saja yang kritis saat ini dan bagaimana rekomendasi tindakan pembeliannya?",
+        help="Asisten akan mencari dokumen SOP terkait di ChromaDB dan membaca status stok langsung dari database."
+    )
+
+    ask_btn = st.button("💬 Konsultasikan dengan AI Advisor", type="primary")
+
+    if ask_btn or quick_q:
+        with st.spinner("Mengakses Vector Database ChromaDB & menganalisis status inventaris..."):
+            rag_output = ask_firaza_advisor(user_question)
+
+        st.markdown("### 📋 Rekomendasi Asisten Cerdas")
+        st.markdown(rag_output["answer"])
+
+        # Tampilkan Metadata Sumber RAG
+        st.markdown("---")
+        col_r1, col_r2 = st.columns(2)
+        with col_r1:
+            with st.expander("📚 Dokumen Referensi dari ChromaDB (Knowledge Base)"):
+                for src in rag_output.get("retrieved_sources", []):
+                    st.markdown(f"**• {src['title']}** (`{src['category']}`)")
+                    st.caption(src["content"])
+        with col_r2:
+            with st.expander("📦 Status Konteks Gudang yang Disuntikkan (Real-Time Injected Context)"):
+                st.text(rag_output["realtime_context"]["stock_summary"])
+                st.caption(rag_output["realtime_context"]["forecast_summary"])
+
+# ==========================================
+# 4. HALAMAN: LOGISTIK & TRANSAKSI STOK
+# ==========================================
+elif menu == "📦 Logistik & Transaksi Stok":
+    st.title("📦 Logistik & Pencatatan Transaksi Stok")
+    st.markdown("Catat transaksi fisik harian (*Stock-In*, *Stock-Out*, atau *Stock Opname*) langsung ke database SQLite.")
+
+    col_form, col_history = st.columns([1, 1])
+
+    with col_form:
+        st.subheader("📝 Input Form Transaksi")
+        materials_df = get_materials_df()
+        material_options = {row["material_name"]: row["material_id"] for _, row in materials_df.iterrows()}
+
+        with st.form("trans_form", clear_on_submit=True):
+            trans_type = st.selectbox(
+                "Jenis Transaksi:",
+                ["Stock-In (Penerimaan Barang / Restock)", "Stock-Out (Pemakaian Produksi / Keluar)", "Stock Opname (Penyesuaian Fisik Gudang)"]
+            )
+            selected_mat_name = st.selectbox("Pilih Material:", list(material_options.keys()))
+            quantity = st.number_input("Jumlah Kuantitas (Unit / Meter / Pcs):", min_value=1, value=50, step=1)
+            notes = st.text_input("Catatan / Keterangan Transaksi:", "Contoh: Penerimaan restock dari PT Kartona")
+
+            submit_trans = st.form_submit_button("💾 Simpan Transaksi ke Database", use_container_width=True, type="primary")
+
+            if submit_trans:
+                mat_id = material_options[selected_mat_name]
+                try:
+                    res = record_transaction(trans_type, mat_id, quantity, notes)
+                    st.success(
+                        f"Berhasil mencatat transaksi!\n"
+                        f"- Material: **{res['material_name']}**\n"
+                        f"- Stok Lama: **{res['old_stock']}** -> Stok Baru: **{res['new_stock']}**"
+                    )
+                except Exception as e:
+                    st.error(f"Gagal mencatat transaksi: {e}")
+
+    with col_history:
+        st.subheader("📜 Riwayat Transaksi Terkini")
+        recent_trx = get_recent_transactions_df(limit=15)
+        st.dataframe(recent_trx, use_container_width=True, hide_index=True)
+
+# ==========================================
+# 5. HALAMAN: MASTER DATA & RESEP BOM
+# ==========================================
+elif menu == "⚙️ Master Data & Resep BOM":
+    st.title("⚙️ Master Data & Bill of Materials (BOM)")
+    st.markdown("Daftar master produk hampers jadi dan resep komponen material dasar pendukung kemasan.")
+
+    tab_mat, tab_prod, tab_bom = st.tabs(["📦 Master Material", "🎁 Master Produk Hampers", "🧾 Resep Bill of Materials (BOM)"])
+
+    with tab_mat:
+        st.subheader("Master Material Penunjang Packaging")
+        mat_df = get_materials_df()
+        st.dataframe(mat_df, use_container_width=True, hide_index=True)
+
+    with tab_prod:
+        st.subheader("Master Produk Hampers Firaza")
+        prod_df = get_products_df()
+        st.dataframe(prod_df, use_container_width=True, hide_index=True)
+
+    with tab_bom:
+        st.subheader("Resep Bill of Materials (BOM)")
+        st.caption("Menunjukkan berapa banyak masing-masing material yang dibutuhkan untuk memproduksi 1 unit hampers jadi.")
+        bom_df = get_bom_df()
+        st.dataframe(bom_df[["product_name", "material_name", "quantity_required", "unit"]], use_container_width=True, hide_index=True)
