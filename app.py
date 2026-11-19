@@ -99,21 +99,9 @@ with st.sidebar:
     )
 
     st.markdown("---")
-    st.subheader("🛡️ AI Engine & Architecture")
-    st.success(
-        "🟢 **100% On-Premise & Standalone**\n\n"
-        "• **Demand Forecasting:** XGBoost Regressor\n"
-        "• **Chat & Order Parsing:** Local Semantic NLP Engine\n"
-        "• **RAG Assistant:** ChromaDB Vector Database\n\n"
-        "*Bebas kuota API, privasi data 100% lokal, dan tanpa ketergantungan internet eksternal.*"
-    )
-
-    st.markdown("---")
     st.caption(
         "**Dicoding Bootcamp Capstone Project**\n"
         "ID Tim: **DB15-I028**\n"
-        "Tema: **Firaza Smart Warehouse**\n"
-        "Author: **Dominick Dexter Gunawan**"
     )
 
 # ==========================================
